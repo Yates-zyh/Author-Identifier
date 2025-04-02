@@ -53,9 +53,9 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
     
     # 获取作家目录列表
     author_dirs = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
-    print(f"发现 {len(author_dirs)} 位作家: {', '.join(author_dirs)}")
+    print(f"{len(author_dirs)} authors detected: {', '.join(author_dirs)}")
     
-    label_names = author_dirs + ["未知作家"]
+    label_names = author_dirs + ["Unknown"]  # 添加"未知作家"标签
     
     # 读取每位作家的文本
     for idx, author_name in enumerate(author_dirs):
@@ -64,7 +64,6 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
         
         # 获取该作家的所有txt文件
         txt_files = [f for f in os.listdir(author_path) if f.endswith('.txt')]
-        print(f"作家 {author_name}: 发现 {len(txt_files)} 个文本文件")
         
         # 读取每个文件并添加到作家文本列表
         for txt_file in txt_files:
@@ -82,16 +81,16 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
                 )
                 author_texts.extend(file_samples)
             except Exception as e:
-                print(f"  - 无法读取 {txt_file}: {str(e)}")
+                print(f"  - Unable to read {txt_file}: {str(e)}")
         
         # 存储该作家的所有样本
         author_samples_dict[author_name] = author_texts
-        print(f"作家 {author_name}: 共 {len(author_texts)} 个样本")
+        print(f"Author {author_name} has: {len(txt_files)} files / {len(author_texts)} samples")
     
-    # 平衡各作家样本数量（如果需要）
+    # 平衡各作家样本数量
     if balance_samples and author_samples_dict:
         min_author_samples = min(len(samples) for samples in author_samples_dict.values())
-        print(f"平衡样本: 每位作家将使用 {min_author_samples} 个样本")
+        print(f"Balancing number of samples: Every author will have {min_author_samples} samples")
         
         # 对样本数量进行限制
         for author_name in author_samples_dict:
@@ -105,7 +104,7 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
     
     # 计算需要的"未知作家"样本数量（等于所有已知作家样本总和，占总样本数的一半）
     target_unknown_samples = len(author_samples_dict) * min_author_samples
-    print(f"目标未知作家样本数量: {target_unknown_samples} (占总样本数的一半)")
+    print(f"Target number of samples of unknown authors: {target_unknown_samples} (occupy half of total samples)")
     
     # 生成"未知作家"样本 - 使用多个NLTK语料库
     unknown_samples = []
@@ -116,12 +115,11 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
         try:
             nltk.data.find(f'corpora/{corpus_name}')
         except LookupError:
-            print(f"正在下载NLTK {corpus_name}语料库...")
+            print(f"Downloading NLTK {corpus_name}...")
             nltk.download(corpus_name)
-            print(f"NLTK {corpus_name}语料库下载完成")
+            print(f"NLTK {corpus_name} downloaded.")
 
     # 从所有语料库收集样本
-    print("从NLTK语料库收集样本...")
     corpus_configs = [
         ("Gutenberg", gutenberg, gutenberg.fileids(), 50),
         ("Brown", brown, brown.fileids(), 25),
@@ -130,19 +128,19 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
     ]
     all_corpus_samples = []
     for corpus_name, corpus, fileids, max_samples in corpus_configs:
-        print(f"从{corpus_name}语料库加载样本...")
+        print(f"Collecting samples from {corpus_name}...")
         all_corpus_samples.extend(collect_samples_from_corpus(
             corpus, fileids, max_samples, tokenizer, max_length, overlap_percent
         ))
-    print(f"从语料库中总共收集了 {len(all_corpus_samples)} 个样本")
+    print(f"{len(all_corpus_samples)} samples collected from NLTK.")
     
     # 随机抽样以获取目标数量的未知作家样本
     if len(all_corpus_samples) < target_unknown_samples:
-        print(f"警告：语料库样本不足，只能使用 {len(all_corpus_samples)} 个样本")
+        print(f"Warning: only {len(all_corpus_samples)} samples available, using all of them.")
         unknown_samples = all_corpus_samples
     else:
         unknown_samples = random.sample(all_corpus_samples, target_unknown_samples)
-    print(f"已抽取 {len(unknown_samples)} 个未知作家样本")
+    print(f"{len(unknown_samples)} samples selected for unknown authors.")
     
     # 将"未知作家"样本添加到数据集
     unknown_label = len(author_dirs)  # 最后一个标签是"未知作家"
@@ -151,8 +149,8 @@ def prepare_data_from_directory(data_dir="data", max_length=512, overlap_percent
     
     # 打印数据集统计信息
     label_counts = [all_labels.count(i) for i in range(len(label_names))]
-    print(f"各类别样本数: {label_counts}")
-    print(f"总样本数: {len(all_texts)}")
+    print(f"Number of samples from each author: {label_counts}")
+    print(f"Total number of samples: {len(all_texts)}")
     
     # 对文本进行分词和编码
     encoded_data = tokenizer(
@@ -310,18 +308,18 @@ def train_model(train_dataloader, val_dataloader, label_names, epochs):
         report = classification_report(all_labels, all_preds, target_names=label_names, digits=4)
         conf_matrix = confusion_matrix(all_labels, all_preds)
         
-        print(f"验证准确率: {avg_val_accuracy:.4f}")
-        print(f"验证损失: {avg_val_loss:.4f}")
-        print("分类报告:\n", report)
-        print("混淆矩阵:\n", conf_matrix)
+        print(f"Accuracy: {avg_val_accuracy:.4f}")
+        print(f"Loss: {avg_val_loss:.4f}")
+        print("Classification Report:\n", report)
+        print("Confusion Matrix:\n", conf_matrix)
     
-    print("训练完成!")
+    print("Training done!")
     return model
 
 # 数据准备
 train_dataloader, val_dataloader, label_names = prepare_data_from_directory(data_dir="data", balance_samples=True)
 num_labels = len(label_names)
-print(f"初始化模型，类别数量: {num_labels}")
+print(f"Number of labels: {num_labels}")
 model = BertForSequenceClassification.from_pretrained(
     model_name,
     num_labels=num_labels,
@@ -342,4 +340,4 @@ import json
 with open(f"{model_save_path}/label_names.json", 'w') as f:
     json.dump(label_names, f)
     
-print(f"已将作者风格模型和标签名称保存至 {model_save_path}")
+print(f"Authors' styles saved to {model_save_path}")
