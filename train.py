@@ -317,7 +317,7 @@ def train_model(train_dataloader, val_dataloader, label_names, epochs):
     return model
 
 # 数据准备
-train_dataloader, val_dataloader, label_names = prepare_data_from_directory(data_dir="data", balance_samples=True)
+train_dataloader, val_dataloader, label_names = prepare_data_from_directory(data_dir="data_train", balance_samples=True)
 num_labels = len(label_names)
 print(f"Number of labels: {num_labels}")
 model = BertForSequenceClassification.from_pretrained(
