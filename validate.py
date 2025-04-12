@@ -77,8 +77,8 @@ def load_validation_data(val_data_dir, samples_per_author, max_text_length=512):
                 paragraphs = [p for p in paragraphs if len(p.split()) >= 50]
                 
                 # 如果段落太多，随机选择几个
-                if len(paragraphs) > 20:
-                    selected_paragraphs = random.sample(paragraphs, 20)
+                if len(paragraphs) > 80:
+                    selected_paragraphs = random.sample(paragraphs, 80)
                 else:
                     selected_paragraphs = paragraphs
                 
@@ -114,7 +114,7 @@ def main():
     print("加载验证数据...")
     samples, true_authors, file_sources = load_validation_data(
         val_data_dir=val_data_dir,
-        samples_per_author=20  # 每位作者取20个样本
+        samples_per_author=80  # 每位作者取80个样本
     )
     
     print(f"总共加载了 {len(samples)} 个样本用于验证")

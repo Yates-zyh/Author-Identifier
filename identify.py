@@ -47,16 +47,3 @@ def analyze_text_style(text, confidence_threshold=0.6):
         }
     
     return result
-
-# with open("test_texts.json", "r", encoding="utf-8") as f:
-#     test_texts = json.load(f)
-
-# for text in test_texts:
-#     result = analyze_text_style(text)
-#     print(f"文本: {text[:50]}...")
-#     print(f"预测作家: {result['predicted_author']}")
-#     print(f"置信度: {result['confidence']:.2f}")
-#     print("所有类别概率:")
-#     for author, prob in result['probabilities'].items():
-#         print(f"  - {author}: {prob:.4f}")
-#     print("-" * 50)

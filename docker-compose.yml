@@ -1,0 +1,15 @@
+version: '3'
+services:
+  author-identifier:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    restart: always
+    networks:
+      - web_network
+
+networks:
+  web_network:
+    driver: bridge
