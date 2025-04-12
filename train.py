@@ -4,14 +4,11 @@ from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 from torch.utils.data import DataLoader, TensorDataset, RandomSampler, SequentialSampler
 import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import random
 import nltk
 from nltk.corpus import gutenberg, brown, reuters, webtext
-import matplotlib.pyplot as plt  # 添加matplotlib导入
-import os  # 添加os模块导入
+import os
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -256,96 +253,28 @@ def create_sliding_window_samples(text, tokenizer, max_length, overlap_tokens, m
     
     return samples
 
-# 添加新函数用于可视化训练历史
-def visualize_training_history(history, save_path=None):
+def train_model(model, train_dataloader, val_dataloader, label_names, epochs, 
+            learning_rate=2e-5, weight_decay=0.01, 
+            save_checkpoint=True, checkpoint_dir='checkpoints'):
     """
-    可视化训练历史
+    训练模型并评估性能
     
     参数:
-    - history: 包含训练历史数据的字典
-    - save_path: 可选的保存路径
+    - model: 待训练的模型
+    - train_dataloader: 训练数据加载器
+    - val_dataloader: 验证数据加载器
+    - label_names: 标签名称列表
+    - epochs: 训练轮次
+    - learning_rate: 学习率
+    - weight_decay: 权重衰减参数
+    - save_checkpoint: 是否保存检查点
+    - checkpoint_dir: 检查点保存目录
+    
+    返回:
+    - model: 训练后的模型
     """
-    epochs = history.get('epochs', [])
-    if not epochs:
-        print("No training history to visualize")
-        return
-        
-    # 创建一个新的图形
-    plt.figure(figsize=(15, 10))
-    
-    # 绘制损失曲线
-    plt.subplot(2, 2, 1)
-    plt.plot(epochs, history['train_loss'], 'b-', label='Training Loss')
-    plt.plot(epochs, history['val_loss'], 'r-', label='Validation Loss')
-    plt.title('Training and Validation Loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    
-    # 绘制准确率曲线
-    plt.subplot(2, 2, 2)
-    plt.plot(epochs, history['val_accuracy'], 'g-', label='Validation Accuracy')
-    plt.title('Validation Accuracy')
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    plt.grid(True)
-    
-    # 绘制F1分数曲线（如果有的话）
-    if 'f1_score' in history:
-        plt.subplot(2, 2, 3)
-        plt.plot(epochs, history['f1_score'], 'm-', label='F1 Score')
-        plt.title('F1 Score')
-        plt.xlabel('Epochs')
-        plt.ylabel('F1 Score')
-        plt.legend()
-        plt.grid(True)
-    
-    # 判断是否过拟合
-    if len(epochs) > 1:
-        is_overfitting = False
-        overfitting_epoch = None
-        
-        for i in range(1, len(epochs)):
-            if (history['val_loss'][i] > history['val_loss'][i-1] and 
-                history['train_loss'][i] < history['train_loss'][i-1]):
-                is_overfitting = True
-                overfitting_epoch = epochs[i]
-                break
-        
-        plt.subplot(2, 2, 4)
-        plt.text(0.5, 0.5, 
-                f"过拟合检测:\n{'可能在第 ' + str(overfitting_epoch) + ' 轮开始过拟合' if is_overfitting else '未检测到明显过拟合'}\n\n"
-                f"过拟合解决方案:\n"
-                f"1. 增加训练数据量\n"
-                f"2. 添加正则化（如dropout、权重衰减）\n"
-                f"3. 减小模型复杂度\n"
-                f"4. 早停（Early Stopping）\n"
-                f"5. 数据增强",
-                ha='center', va='center', fontsize=12)
-        plt.axis('off')
-    
-    plt.tight_layout()
-    
-    # 如果提供了保存路径，则保存图像
-    if save_path:
-        plt.savefig(save_path)
-        print(f"Training history visualization saved to {save_path}")
-    
-    plt.show()
-
-def train_model(model, train_dataloader, val_dataloader, label_names, epochs, epoch_callback=None):
-    # 创建一个字典来存储训练历史
-    history = {
-        'epochs': [],
-        'train_loss': [],
-        'val_loss': [],
-        'val_accuracy': [],
-        'f1_score': []
-    }
-    
-    optimizer = AdamW(model.parameters(), lr=2e-5, eps=1e-8, weight_decay=0.01)
+    # 准备优化器和学习率调度器
+    optimizer = AdamW(model.parameters(), lr=learning_rate, eps=1e-8, weight_decay=weight_decay)
     total_steps = len(train_dataloader) * epochs
     scheduler = get_linear_schedule_with_warmup(
         optimizer, 
@@ -353,11 +282,22 @@ def train_model(model, train_dataloader, val_dataloader, label_names, epochs, ep
         num_training_steps=total_steps
     )
     
+    # 早停设置
+    early_stopping_counter = 0
+    best_val_loss = float('inf')
+    best_model_state = None
+    
+    # 确保检查点目录存在
+    if save_checkpoint and not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    
     for epoch in range(epochs):
         print(f'======== Epoch {epoch + 1} / {epochs} ========')
+        
+        # 训练阶段
         model.train()
         total_train_loss = 0
-        for batch in tqdm(train_dataloader):
+        for batch in tqdm(train_dataloader, desc="Training"):
             model.zero_grad()
             
             input_ids = batch[0].to(device)
@@ -380,14 +320,16 @@ def train_model(model, train_dataloader, val_dataloader, label_names, epochs, ep
             scheduler.step()
         
         avg_train_loss = total_train_loss / len(train_dataloader)
-        print(f"Average training loss: {avg_train_loss}")
+        print(f"Average training loss: {avg_train_loss:.4f}")
+        
+        # 评估阶段
         model.eval()
         total_eval_accuracy = 0
         total_eval_loss = 0
         all_preds = []
         all_labels = []
         
-        for batch in tqdm(val_dataloader):
+        for batch in tqdm(val_dataloader, desc="Evaluating"):
             with torch.no_grad():
                 input_ids = batch[0].to(device)
                 attention_mask = batch[1].to(device)
@@ -421,69 +363,101 @@ def train_model(model, train_dataloader, val_dataloader, label_names, epochs, ep
         conf_matrix = confusion_matrix(all_labels, all_preds)
         f1 = f1_score(all_labels, all_preds, average='weighted')
         
-        print(f"Accuracy: {avg_val_accuracy:.4f}")
-        print(f"Loss: {avg_val_loss:.4f}")
+        print(f"Validation Accuracy: {avg_val_accuracy:.4f}")
+        print(f"Validation Loss: {avg_val_loss:.4f}")
         print(f"F1 Score: {f1:.4f}")
-        print("Classification Report:\n", report)
-        print("Confusion Matrix:\n", conf_matrix)
         
-        # 添加本轮结果到历史记录
-        history['epochs'].append(epoch + 1)
-        history['train_loss'].append(avg_train_loss)
-        history['val_loss'].append(avg_val_loss)
-        history['val_accuracy'].append(avg_val_accuracy)
-        history['f1_score'].append(f1)
-        
-        # 调用回调函数（如果提供）
-        if epoch_callback:
-            continue_training = epoch_callback(
-                epoch=epoch,
-                train_loss=avg_train_loss,
-                val_accuracy=avg_val_accuracy,
-                val_loss=avg_val_loss,
-                all_preds=all_preds,
-                all_labels=all_labels
-            )
-            if not continue_training:
-                print("Early stopping triggered by callback.")
-                break
+        # 检查是否需要保存最佳模型
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_model_state = model.state_dict().copy()
+            early_stopping_counter = 0
+            
+            # 保存检查点
+            if save_checkpoint:
+                checkpoint_path = os.path.join(checkpoint_dir, f'best_model_epoch_{epoch+1}.pt')
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': avg_val_loss,
+                    'val_accuracy': avg_val_accuracy,
+                    'f1_score': f1,
+                    'label_names': label_names,
+                }, checkpoint_path)
     
-    print("Training done!")
-    
-    # 可视化训练历史
-    if not os.path.exists('visualizations'):
-        os.makedirs('visualizations')
-    visualize_training_history(history, save_path='visualizations/training_history.png')
-    
-    return model, history
+    # 如果存在最佳模型状态，则加载它
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
 
-def main():
-    print("Collecting NLTK samples (this will be done only once)...")
+    return model
+
+def main(train_dir, val_dir, model_save_dir, 
+         model_name, epochs, balance_samples,
+         learning_rate, weight_decay):
+    """
+    训练作者身份识别模型的主函数
+    
+    参数:
+    - train_dir: 训练数据目录
+    - val_dir: 验证数据目录
+    - model_save_dir: 模型保存目录
+    - model_name: 预训练模型名称
+    - epochs: 训练轮次
+    - balance_samples: 是否平衡各类别样本数
+    - learning_rate: 学习率
+    - weight_decay: 权重衰减参数
+    """
+    # 设置随机种子，确保结果可复现
+    seed_val = 42
+    random.seed(seed_val)
+    np.random.seed(seed_val)
+    torch.manual_seed(seed_val)
+    torch.cuda.manual_seed_all(seed_val)
+    
+    print(f"开始作者识别模型训练流程...")
+    print(f"训练数据目录: {train_dir}")
+    print(f"验证数据目录: {val_dir}")
+    print(f"模型将保存到: {model_save_dir}")
+    print(f"预训练模型: {model_name}")
+    print(f"训练轮次: {epochs}")
+    print(f"设备: {device}")
+    
+    # 确保模型保存目录存在
+    if not os.path.exists(model_save_dir):
+        os.makedirs(model_save_dir)
+    
+    # 收集NLTK样本（仅需执行一次）
     all_nltk_samples = collect_nltk_samples(tokenizer)
     train_ratio = 0.7  # 70%用于训练，30%用于验证
 
     # 数据准备（使用预先收集的NLTK样本）
     train_dataloader, label_names_train = prepare_data_from_directory(
-        data_dir="data_train", 
-        balance_samples=True, 
+        data_dir=train_dir, 
+        balance_samples=balance_samples, 
         is_training=True,
         nltk_samples=all_nltk_samples,
         train_sample_ratio=train_ratio
     )
 
     val_dataloader, label_names_val = prepare_data_from_directory(
-        data_dir="data_val", 
-        balance_samples=True, 
+        data_dir=val_dir, 
+        balance_samples=balance_samples, 
         is_training=False,
         nltk_samples=all_nltk_samples,
         train_sample_ratio=train_ratio
     )
 
-    # 使用训练集的标签
-    label_names = label_names_train
+    # 验证标签一致性
+    if set(label_names_train) != set(label_names_val):
+        combined_labels = list(set(label_names_train) | set(label_names_val))
+        label_names = sorted(combined_labels)
+    else:
+        label_names = label_names_train
+        
     num_labels = len(label_names)
-    print(f"Number of labels: {num_labels}")
 
+    # 初始化模型
     model = BertForSequenceClassification.from_pretrained(
         model_name,
         num_labels=num_labels,
@@ -492,19 +466,74 @@ def main():
     )
     model.to(device)
 
-    fine_tuned_model, training_history = train_model(model, train_dataloader, val_dataloader, label_names, epochs=20)
+    # 训练模型
+    fine_tuned_model, training_history = train_model(
+        model, 
+        train_dataloader, 
+        val_dataloader, 
+        label_names, 
+        epochs=epochs,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+        save_checkpoint=True,
+        checkpoint_dir=os.path.join(model_save_dir, 'checkpoints')
+    )
 
-    # 保存模型和标签名称
-    model_save_path = "../author_style_model"
-    fine_tuned_model.save_pretrained(model_save_path)
-    tokenizer.save_pretrained(model_save_path)
+    # 保存最终模型和标签名称
+    model_timestamp = time.strftime("%Y%m%d_%H%M%S")
+    final_model_dir = os.path.join(model_save_dir, f"author_model_{model_timestamp}")
+    
+    # 保存模型和分词器
+    fine_tuned_model.save_pretrained(final_model_dir)
+    tokenizer.save_pretrained(final_model_dir)
 
     # 保存标签名称
     import json
-    with open(f"{model_save_path}/label_names.json", 'w') as f:
-        json.dump(label_names, f)
+    with open(os.path.join(final_model_dir, "label_names.json"), 'w', encoding='utf-8') as f:
+        json.dump(label_names, f, ensure_ascii=False, indent=4)
+    
+    # 保存模型元数据
+    metadata = {
+        "model_name": model_name,
+        "training_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "num_labels": num_labels,
+        "training_epochs": epochs,
+        "final_accuracy": training_history['val_accuracy'][-1] if training_history['val_accuracy'] else None,
+        "final_f1_score": training_history['f1_score'][-1] if training_history['f1_score'] else None,
+        "label_names": label_names,
+        "train_data_dir": train_dir,
+        "val_data_dir": val_dir
+    }
+    
+    with open(os.path.join(final_model_dir, "model_metadata.json"), 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=4)
         
-    print(f"Authors' styles saved to {model_save_path}")
+    return fine_tuned_model, label_names, final_model_dir
 
 if __name__ == "__main__":
-    main()
+    # 可以通过命令行参数覆盖默认配置
+    import argparse
+    import time
+    
+    parser = argparse.ArgumentParser(description='训练作者风格识别模型')
+    parser.add_argument('--train_dir', type=str, default='data_train', help='训练数据目录')
+    parser.add_argument('--val_dir', type=str, default='data_val', help='验证数据目录')
+    parser.add_argument('--model_dir', type=str, default='../author_style_model', help='模型保存目录')
+    parser.add_argument('--model_name', type=str, default='bert-base-uncased', help='预训练模型名称')
+    parser.add_argument('--epochs', type=int, default=20, help='训练轮次')
+    parser.add_argument('--no_balance', action='store_false', dest='balance_samples', help='不平衡各类别样本数')
+    parser.add_argument('--lr', type=float, default=2e-5, help='学习率')
+    parser.add_argument('--weight_decay', type=float, default=0.01, help='权重衰减参数')
+    
+    args = parser.parse_args()
+    
+    main(
+        train_dir=args.train_dir,
+        val_dir=args.val_dir,
+        model_save_dir=args.model_dir,
+        model_name=args.model_name,
+        epochs=args.epochs,
+        balance_samples=args.balance_samples,
+        learning_rate=args.lr,
+        weight_decay=args.weight_decay
+    )
