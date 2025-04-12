@@ -19,7 +19,7 @@ tokenizer = BertTokenizer.from_pretrained(model_name)
 # 从语料库中收集样本的通用函数
 def collect_samples_from_corpus(corpus, fileids, max_samples, tokenizer, max_length, overlap_percent):
     """
-    从指定的语料库中收集样本
+    Collect samples from the specified corpus
     """
     samples = []
     for fileid in fileids:
@@ -36,7 +36,7 @@ def collect_samples_from_corpus(corpus, fileids, max_samples, tokenizer, max_len
 # 添加一个新函数，专门用于收集NLTK语料库的样本
 def collect_nltk_samples(tokenizer, max_length=512, overlap_percent=0.3):
     """
-    从NLTK语料库中收集样本，仅需调用一次
+    Collect samples from NLTK corpus, only needs to be called once
     
     参数:
     - tokenizer: 分词器
@@ -79,7 +79,7 @@ def prepare_data_from_directory(data_dir, max_length=512, overlap_percent=0.2,
                                 balance_samples=True, is_training=True, nltk_samples=None,
                                 train_sample_ratio=0.7):
     """
-    从目录结构中准备多个作家的文本数据，并生成用于训练或验证的数据集
+    Prepare text data from multiple authors from a directory structure and generate datasets for training or validation
     
     参数:
     - data_dir: 包含作家文件夹的目录路径
@@ -208,7 +208,7 @@ def prepare_data_from_directory(data_dir, max_length=512, overlap_percent=0.2,
 # 添加一个新函数，用于创建滑动窗口样本
 def create_sliding_window_samples(text, tokenizer, max_length, overlap_tokens, max_samples=None):
     """
-    使用滑动窗口方法从长文本中创建样本
+    Create samples from long text using sliding window method
     
     参数:
     - text: 输入文本
@@ -257,7 +257,7 @@ def train_model(model, train_dataloader, val_dataloader, label_names, epochs,
             learning_rate=2e-5, weight_decay=0.01, 
             save_checkpoint=True, checkpoint_dir='checkpoints'):
     """
-    训练模型并评估性能
+    Train the model and evaluate performance
     
     参数:
     - model: 待训练的模型
@@ -396,7 +396,7 @@ def main(train_dir, val_dir, model_save_dir,
          model_name, epochs, balance_samples,
          learning_rate, weight_decay):
     """
-    训练作者身份识别模型的主函数
+    Main function for training author identification model
     
     参数:
     - train_dir: 训练数据目录
@@ -415,13 +415,13 @@ def main(train_dir, val_dir, model_save_dir,
     torch.manual_seed(seed_val)
     torch.cuda.manual_seed_all(seed_val)
     
-    print(f"开始作者识别模型训练流程...")
-    print(f"训练数据目录: {train_dir}")
-    print(f"验证数据目录: {val_dir}")
-    print(f"模型将保存到: {model_save_dir}")
-    print(f"预训练模型: {model_name}")
-    print(f"训练轮次: {epochs}")
-    print(f"设备: {device}")
+    print(f"Starting author identification model training process...")
+    print(f"Training data directory: {train_dir}")
+    print(f"Validation data directory: {val_dir}")
+    print(f"Model will be saved to: {model_save_dir}")
+    print(f"Pre-trained model: {model_name}")
+    print(f"Training epochs: {epochs}")
+    print(f"Device: {device}")
     
     # 确保模型保存目录存在
     if not os.path.exists(model_save_dir):
@@ -515,15 +515,15 @@ if __name__ == "__main__":
     import argparse
     import time
     
-    parser = argparse.ArgumentParser(description='训练作者风格识别模型')
-    parser.add_argument('--train_dir', type=str, default='data_train', help='训练数据目录')
-    parser.add_argument('--val_dir', type=str, default='data_val', help='验证数据目录')
-    parser.add_argument('--model_dir', type=str, default='../author_style_model', help='模型保存目录')
-    parser.add_argument('--model_name', type=str, default='bert-base-uncased', help='预训练模型名称')
-    parser.add_argument('--epochs', type=int, default=20, help='训练轮次')
-    parser.add_argument('--no_balance', action='store_false', dest='balance_samples', help='不平衡各类别样本数')
-    parser.add_argument('--lr', type=float, default=2e-5, help='学习率')
-    parser.add_argument('--weight_decay', type=float, default=0.01, help='权重衰减参数')
+    parser = argparse.ArgumentParser(description='Train author style identification model')
+    parser.add_argument('--train_dir', type=str, default='data_train', help='Training data directory')
+    parser.add_argument('--val_dir', type=str, default='data_val', help='Validation data directory')
+    parser.add_argument('--model_dir', type=str, default='../author_style_model', help='Model save directory')
+    parser.add_argument('--model_name', type=str, default='bert-base-uncased', help='Pre-trained model name')
+    parser.add_argument('--epochs', type=int, default=20, help='Training epochs')
+    parser.add_argument('--no_balance', action='store_false', dest='balance_samples', help='Do not balance samples across classes')
+    parser.add_argument('--lr', type=float, default=2e-5, help='Learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay parameter')
     
     args = parser.parse_args()
     
