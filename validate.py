@@ -1,333 +1,358 @@
 import os
+import json
+import time
+import torch
+import numpy as np
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, accuracy_score
+from identify import AuthorIdentifier
+import matplotlib.pyplot as plt
+import seaborn as sns
+from transformers import BertTokenizer
 import random
 from tqdm import tqdm
-from sklearn.metrics import classification_report, confusion_matrix
-import json
-import numpy as np
-from identify import analyze_text_style
 
-def load_validation_data(val_data_dir, samples_per_author, max_text_length=512):
+# 从train.py中重用函数用于创建滑动窗口样本
+def create_sliding_window_samples(text, tokenizer, max_length=512, overlap_tokens=128, max_samples=None):
     """
-    从验证数据目录加载文本段落用于测试
+    从长文本中使用滑动窗口方法创建样本
     
     参数:
-    - val_data_dir: 验证数据目录
-    - samples_per_author: 每位作者取出的样本数
-    - max_text_length: 每个样本的最大文本长度
+    - text: 输入文本
+    - tokenizer: 分词器
+    - max_length: 窗口的最大token长度
+    - overlap_tokens: 相邻窗口之间重叠的token数量
+    - max_samples: 最大样本数量限制
     
     返回:
     - samples: 文本样本列表
-    - true_authors: 真实作者列表
-    - file_sources: 文件来源
     """
+    # 清理文本，移除多余空白符
+    text = ' '.join(text.split())
+    
+    # 对整个文本进行分词，获取tokens
+    tokens = tokenizer.encode(text)
+    
     samples = []
-    true_authors = []
-    file_sources = []
+    start_idx = 0
     
-    # 读取模型支持的作者列表
-    model_path = "../author_style_model"
-    with open(f"{model_path}/label_names.json", 'r') as f:
-        label_names = json.load(f)
+    # 使用滑动窗口切分文本
+    while start_idx < len(tokens):
+        # 确保不超出文本长度
+        end_idx = min(start_idx + max_length, len(tokens))
+        
+        window_tokens = tokens[start_idx:end_idx]
+        
+        if len(window_tokens) >= 100:
+            window_text = tokenizer.decode(window_tokens)
+            samples.append(window_text)
+        
+        # 如果已经到达文本末尾，退出循环
+        if end_idx == len(tokens):
+            break
+            
+        # 更新下一个窗口的起始位置（考虑重叠）
+        start_idx += (max_length - overlap_tokens)
+        
+        # 如果达到样本数量限制，提前结束
+        if max_samples and len(samples) >= max_samples:
+            break
     
-    # 过滤掉"Unknown"标签
-    known_authors = [author for author in label_names if author != "Unknown"]
-    
-    # 获取作家目录列表
-    author_dirs = [d for d in os.listdir(val_data_dir) 
-                if os.path.isdir(os.path.join(val_data_dir, d)) and d in known_authors]
-    
-    print(f"在验证数据中找到 {len(author_dirs)} 位作者: {', '.join(author_dirs)}")
-    
-    for author_name in author_dirs:
-        author_path = os.path.join(val_data_dir, author_name)
-        
-        # 获取该作家的所有txt文件
-        txt_files = [f for f in os.listdir(author_path) if f.endswith('.txt')]
-        
-        author_samples = []
-        author_files = []
-        
-        # 从每个文件中读取段落
-        for txt_file in txt_files:
-            file_path = os.path.join(author_path, txt_file)
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                
-                # 简单分段，每段最多max_text_length个字符
-                paragraphs = []
-                words = text.split()
-                current_paragraph = []
-                current_length = 0
-                
-                for word in words:
-                    if current_length + len(word) + 1 > max_text_length:
-                        if current_paragraph:  # 确保段落不为空
-                            paragraphs.append(' '.join(current_paragraph))
-                        current_paragraph = [word]
-                        current_length = len(word)
-                    else:
-                        current_paragraph.append(word)
-                        current_length += len(word) + 1  # +1 for space
-                
-                if current_paragraph:  # 添加最后一个段落
-                    paragraphs.append(' '.join(current_paragraph))
-                
-                # 过滤掉太短的段落
-                paragraphs = [p for p in paragraphs if len(p.split()) >= 50]
-                
-                # 如果段落太多，随机选择几个
-                if len(paragraphs) > 80:
-                    selected_paragraphs = random.sample(paragraphs, 80)
-                else:
-                    selected_paragraphs = paragraphs
-                
-                author_samples.extend(selected_paragraphs)
-                author_files.extend([txt_file] * len(selected_paragraphs))
-                
-            except Exception as e:
-                print(f"  - 无法读取 {txt_file}: {str(e)}")
-        
-        # 如果样本数量超过指定值，随机选择
-        if len(author_samples) > samples_per_author:
-            indices = random.sample(range(len(author_samples)), samples_per_author)
-            selected_samples = [author_samples[i] for i in indices]
-            selected_files = [author_files[i] for i in indices]
-        else:
-            selected_samples = author_samples
-            selected_files = author_files
-        
-        # 添加到总列表
-        samples.extend(selected_samples)
-        true_authors.extend([author_name] * len(selected_samples))
-        file_sources.extend(selected_files)
-        
-        print(f"作者 {author_name}: 添加了 {len(selected_samples)} 个样本段落")
-    
-    return samples, true_authors, file_sources
+    return samples
 
-def main():
-    # 数据路径
-    val_data_dir = "data_val"
-    
-    # 加载验证数据
-    print("加载验证数据...")
-    samples, true_authors, file_sources = load_validation_data(
-        val_data_dir=val_data_dir,
-        samples_per_author=80  # 每位作者取80个样本
-    )
-    
-    print(f"总共加载了 {len(samples)} 个样本用于验证")
-    
-    # 预测结果
-    print("进行预测分析...")
-    results = []
-    predicted_authors = []
-    confidence_scores = []
-    
-    for sample in tqdm(samples):
-        result = analyze_text_style(sample)
-        results.append(result)
-        predicted_authors.append(result["predicted_author"])
-        confidence_scores.append(result["confidence"])
-    
-    # 计算准确率
-    correct = sum(p == t for p, t in zip(predicted_authors, true_authors))
-    accuracy = correct / len(true_authors) if true_authors else 0
-    
-    print(f"\n总体准确率: {accuracy:.4f} ({correct}/{len(true_authors)})")
-    
-    # 按作者评估准确率
-    print("\n按作者的准确率:")
-    unique_authors = set(true_authors)
-    
-    for author in unique_authors:
-        author_indices = [i for i, a in enumerate(true_authors) if a == author]
-        author_correct = sum(predicted_authors[i] == true_authors[i] for i in author_indices)
-        author_accuracy = author_correct / len(author_indices)
-        
-        print(f"  {author}: {author_accuracy:.4f} ({author_correct}/{len(author_indices)})")
-    
-    # 混淆矩阵和分类报告
-    unique_labels = sorted(list(set(true_authors + predicted_authors)))
-    
-    print("\n分类报告:")
-    print(classification_report(true_authors, predicted_authors, labels=unique_labels, digits=4))
-    
-    # print("\n混淆矩阵:")
-    # cm = confusion_matrix(true_authors, predicted_authors, labels=unique_labels)
-    
-    # # 打印带标签的混淆矩阵
-    # print("    " + " ".join(f"{label[:7]:>7}" for label in unique_labels))
-    # for i, row in enumerate(cm):
-    #     print(f"{unique_labels[i][:7]:>7} " + " ".join(f"{cell:>7}" for cell in row))
-    
-if __name__ == "__main__":
-    main()
-
-import os
-import random
-from tqdm import tqdm
-from sklearn.metrics import classification_report, confusion_matrix
-import json
-import numpy as np
-from identify import analyze_text_style
-
-def load_validation_data(val_data_dir, samples_per_author, max_text_length=512):
+def get_samples_from_author_file(file_path, tokenizer, samples_per_file=10, max_length=512, overlap_tokens=128):
     """
-    从验证数据目录加载文本段落用于测试
+    从作者的文件中获取文本样本
     
     参数:
-    - val_data_dir: 验证数据目录
-    - samples_per_author: 每位作者取出的样本数
-    - max_text_length: 每个样本的最大文本长度
+    - file_path: 文件路径
+    - tokenizer: 分词器
+    - samples_per_file: 每个文件需要的样本数量
+    - max_length: 最大token长度
+    - overlap_tokens: 滑动窗口重叠token数量
     
     返回:
-    - samples: 文本样本列表
-    - true_authors: 真实作者列表
-    - file_sources: 文件来源
+    - samples: 样本列表
     """
-    samples = []
-    true_authors = []
-    file_sources = []
-    
-    # 读取模型支持的作者列表
-    model_path = "../author_style_model"
-    with open(f"{model_path}/label_names.json", 'r') as f:
-        label_names = json.load(f)
-    
-    # 过滤掉"Unknown"标签
-    known_authors = [author for author in label_names if author != "Unknown"]
-    
-    # 获取作家目录列表
-    author_dirs = [d for d in os.listdir(val_data_dir) 
-                if os.path.isdir(os.path.join(val_data_dir, d)) and d in known_authors]
-    
-    print(f"在验证数据中找到 {len(author_dirs)} 位作者: {', '.join(author_dirs)}")
-    
-    for author_name in author_dirs:
-        author_path = os.path.join(val_data_dir, author_name)
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
         
-        # 获取该作家的所有txt文件
-        txt_files = [f for f in os.listdir(author_path) if f.endswith('.txt')]
+        # 使用滑动窗口创建样本
+        all_samples = create_sliding_window_samples(
+            text, 
+            tokenizer, 
+            max_length=max_length,
+            overlap_tokens=overlap_tokens
+        )
         
-        author_samples = []
-        author_files = []
-        
-        # 从每个文件中读取段落
-        for txt_file in txt_files:
-            file_path = os.path.join(author_path, txt_file)
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                
-                # 简单分段，每段最多max_text_length个字符
-                paragraphs = []
-                words = text.split()
-                current_paragraph = []
-                current_length = 0
-                
-                for word in words:
-                    if current_length + len(word) + 1 > max_text_length:
-                        if current_paragraph:  # 确保段落不为空
-                            paragraphs.append(' '.join(current_paragraph))
-                        current_paragraph = [word]
-                        current_length = len(word)
-                    else:
-                        current_paragraph.append(word)
-                        current_length += len(word) + 1  # +1 for space
-                
-                if current_paragraph:  # 添加最后一个段落
-                    paragraphs.append(' '.join(current_paragraph))
-                
-                # 过滤掉太短的段落
-                paragraphs = [p for p in paragraphs if len(p.split()) >= 50]
-                
-                # 如果段落太多，随机选择几个
-                if len(paragraphs) > 20:
-                    selected_paragraphs = random.sample(paragraphs, 20)
-                else:
-                    selected_paragraphs = paragraphs
-                
-                author_samples.extend(selected_paragraphs)
-                author_files.extend([txt_file] * len(selected_paragraphs))
-                
-            except Exception as e:
-                print(f"  - 无法读取 {txt_file}: {str(e)}")
-        
-        # 如果样本数量超过指定值，随机选择
-        if len(author_samples) > samples_per_author:
-            indices = random.sample(range(len(author_samples)), samples_per_author)
-            selected_samples = [author_samples[i] for i in indices]
-            selected_files = [author_files[i] for i in indices]
+        # 如果样本数量足够，随机选择指定数量的样本
+        if len(all_samples) > samples_per_file:
+            return random.sample(all_samples, samples_per_file)
         else:
-            selected_samples = author_samples
-            selected_files = author_files
-        
-        # 添加到总列表
-        samples.extend(selected_samples)
-        true_authors.extend([author_name] * len(selected_samples))
-        file_sources.extend(selected_files)
-        
-        print(f"作者 {author_name}: 添加了 {len(selected_samples)} 个样本段落")
-    
-    return samples, true_authors, file_sources
+            return all_samples
+    except Exception as e:
+        print(f"读取文件 {file_path} 时出错: {str(e)}")
+        return []
 
-def main():
-    # 数据路径
-    val_data_dir = "data_val"
+def get_authors_and_samples(data_dir, tokenizer, samples_per_author=30, samples_per_file=10):
+    """
+    获取数据目录中所有作者的样本
     
-    # 加载验证数据
-    print("加载验证数据...")
-    samples, true_authors, file_sources = load_validation_data(
-        val_data_dir=val_data_dir,
-        samples_per_author=20  # 每位作者取20个样本
+    参数:
+    - data_dir: 数据目录路径
+    - tokenizer: 分词器
+    - samples_per_author: On每个作者的总样本数量
+    - samples_per_file: 每个文件获取的样本数量
+    
+    返回:
+    - author_samples: 包含作者及其样本的字典
+    """
+    author_samples = {}
+    
+    # 获取作者目录列表
+    author_dirs = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+    print(f"在 {data_dir} 中检测到 {len(author_dirs)} 个作者: {', '.join(author_dirs)}")
+    
+    # 读取每位作者的文件
+    for author_name in author_dirs:
+        author_path = os.path.join(data_dir, author_name)
+        author_all_samples = []
+        
+        # 获取该作者的所有txt文件
+        txt_files = [os.path.join(author_path, f) for f in os.listdir(author_path) if f.endswith('.txt')]
+        
+        if txt_files:
+            print(f"从作者 {author_name} 的 {len(txt_files)} 个文件中收集样本...")
+            
+            # 从每个文件中获取样本
+            for file_path in txt_files:
+                file_samples = get_samples_from_author_file(
+                    file_path, 
+                    tokenizer, 
+                    samples_per_file=samples_per_file
+                )
+                author_all_samples.extend(file_samples)
+            
+            # 如果样本数量足够，随机选择指定数量的样本
+            if len(author_all_samples) > samples_per_author:
+                author_samples[author_name] = random.sample(author_all_samples, samples_per_author)
+            else:
+                author_samples[author_name] = author_all_samples
+                
+            print(f"作者 {author_name} 共收集了 {len(author_samples[author_name])} 个样本")
+    
+    return author_samples
+
+def validate_model(model_path, data_dir, samples_per_author=30, samples_per_file=10, save_results=True, plot_confusion_matrix=True):
+    """
+    使用验证集验证模型性能
+    
+    参数:
+    - model_path: 模型路径
+    - data_dir: 验证数据目录
+    - samples_per_author: 每个作者的总样本数量
+    - samples_per_file: 每个文件获取的样本数量
+    - save_results: 是否保存结果
+    - plot_confusion_matrix: 是否绘制混淆矩阵
+    
+    返回:
+    - results: 包含验证结果的字典
+    """
+    print(f"开始验证模型: {model_path}")
+    print(f"验证数据目录: {data_dir}")
+    
+    # 初始化结果字典
+    results = {
+        "model_path": model_path,
+        "data_dir": data_dir,
+        "validation_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "per_sample_results": [],
+        "per_author_results": {},
+        "overall_metrics": {}
+    }
+    
+    # 初始化作者识别器
+    identifier = AuthorIdentifier(model_path=model_path)
+    model_info = identifier.get_model_info()
+    results["model_info"] = model_info
+    
+    # 获取标签名称(作者列表)
+    label_names = model_info.get("labels", [])
+    print(f"模型可识别的作者: {', '.join(label_names)}")
+    
+    # 初始化分词器
+    tokenizer = BertTokenizer.from_pretrained(model_path)
+    
+    # 获取作者和样本
+    author_samples = get_authors_and_samples(
+        data_dir, 
+        tokenizer, 
+        samples_per_author=samples_per_author,
+        samples_per_file=samples_per_file
     )
     
-    print(f"总共加载了 {len(samples)} 个样本用于验证")
+    all_true_labels = []
+    all_predicted_labels = []
+    all_confidence_scores = []
     
-    # 预测结果
-    print("进行预测分析...")
-    results = []
-    predicted_authors = []
-    confidence_scores = []
-    
-    for sample in tqdm(samples):
-        result = analyze_text_style(sample)
-        results.append(result)
-        predicted_authors.append(result["predicted_author"])
-        confidence_scores.append(result["confidence"])
-    
-    # 计算准确率
-    correct = sum(p == t for p, t in zip(predicted_authors, true_authors))
-    accuracy = correct / len(true_authors) if true_authors else 0
-    
-    print(f"\n总体准确率: {accuracy:.4f} ({correct}/{len(true_authors)})")
-    
-    # 按作者评估准确率
-    print("\n按作者的准确率:")
-    unique_authors = set(true_authors)
-    
-    for author in unique_authors:
-        author_indices = [i for i, a in enumerate(true_authors) if a == author]
-        author_correct = sum(predicted_authors[i] == true_authors[i] for i in author_indices)
-        author_accuracy = author_correct / len(author_indices)
+    # 对每个作者的每个样本进行验证
+    for author_name, samples in author_samples.items():
+        author_true_labels = []
+        author_predicted_labels = []
+        author_confidence_scores = []
         
-        print(f"  {author}: {author_accuracy:.4f} ({author_correct}/{len(author_indices)})")
+        # 跳过未知的作者(如果需要)
+        if author_name not in label_names and "Unknown Author" not in label_names:
+            print(f"警告: 模型未训练识别作者 '{author_name}'，跳过验证...")
+            continue
+        
+        print(f"验证作者 '{author_name}' 的 {len(samples)} 个样本...")
+        
+        # 使用tqdm显示进度条
+        for i, sample_text in enumerate(tqdm(samples, desc=f"验证作者 {author_name} 的样本")):
+            sample_id = f"{author_name}_sample_{i+1}"
+            
+            # 分析样本
+            try:
+                result = identifier.analyze_text(sample_text)
+                
+                # 记录结果
+                predicted_author = result.get("predicted_author", "Error")
+                confidence = result.get("confidence", 0.0)
+                
+                sample_result = {
+                    "sample_id": sample_id,
+                    "true_author": author_name,
+                    "predicted_author": predicted_author,
+                    "confidence": confidence,
+                    "is_correct": predicted_author == author_name,
+                    "sample_length": len(sample_text.split())  # 记录样本词数
+                }
+                
+                results["per_sample_results"].append(sample_result)
+                
+                # 为整体指标收集数据
+                author_true_labels.append(author_name)
+                author_predicted_labels.append(predicted_author)
+                author_confidence_scores.append(confidence)
+                
+            except Exception as e:
+                print(f"  分析样本 {sample_id} 时出错: {str(e)}")
+                results["per_sample_results"].append({
+                    "sample_id": sample_id,
+                    "true_author": author_name,
+                    "error": str(e)
+                })
+        
+        # 计算每个作者的指标
+        if author_true_labels:
+            correct_predictions = sum(1 for true, pred in zip(author_true_labels, author_predicted_labels) if true == pred)
+            author_accuracy = correct_predictions / len(author_true_labels)
+            
+            results["per_author_results"][author_name] = {
+                "num_samples": len(author_true_labels),
+                "num_correct": correct_predictions,
+                "accuracy": author_accuracy,
+                "avg_confidence": np.mean(author_confidence_scores)
+            }
+            
+            print(f"  作者 '{author_name}' 的准确率: {author_accuracy:.4f} ({correct_predictions}/{len(author_true_labels)})")
+            
+            # 添加到整体结果
+            all_true_labels.extend(author_true_labels)
+            all_predicted_labels.extend(author_predicted_labels)
+            all_confidence_scores.extend(author_confidence_scores)
     
-    # 混淆矩阵和分类报告
-    unique_labels = sorted(list(set(true_authors + predicted_authors)))
+    # 计算整体指标
+    if all_true_labels:
+        # 计算整体准确率
+        overall_accuracy = accuracy_score(all_true_labels, all_predicted_labels)
+        results["overall_metrics"]["accuracy"] = overall_accuracy
+        
+        # 计算加权F1分数
+        unique_labels = sorted(set(all_true_labels) | set(all_predicted_labels))
+        f1 = f1_score(all_true_labels, all_predicted_labels, labels=unique_labels, average='weighted')
+        results["overall_metrics"]["f1_score"] = f1
+        
+        # 生成分类报告
+        class_report = classification_report(all_true_labels, all_predicted_labels, labels=unique_labels, output_dict=True)
+        results["overall_metrics"]["classification_report"] = class_report
+        
+        # 计算混淆矩阵
+        conf_matrix = confusion_matrix(all_true_labels, all_predicted_labels, labels=unique_labels)
+        
+        # 将混淆矩阵转换为列表(便于JSON序列化)
+        results["overall_metrics"]["confusion_matrix"] = conf_matrix.tolist()
+        results["overall_metrics"]["confusion_matrix_labels"] = unique_labels
+        
+        print(f"\n整体准确率: {overall_accuracy:.4f}")
+        print(f"加权F1分数: {f1:.4f}")
+        
+        # 打印分类报告
+        print("\n分类报告:")
+        print(classification_report(all_true_labels, all_predicted_labels, labels=unique_labels))
+        
+        # 绘制混淆矩阵
+        if plot_confusion_matrix and len(unique_labels) > 1:
+            plt.figure(figsize=(10, 8))
+            sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues',
+                       xticklabels=unique_labels, yticklabels=unique_labels)
+            plt.xlabel('Prediction')
+            plt.ylabel('Ground Truth')
+            plt.title('Confusion Matrix')
+            
+            # 保存图像
+            if save_results:
+                os.makedirs('visualizations', exist_ok=True)
+                plt.savefig('visualizations/confusion_matrix.png', dpi=300, bbox_inches='tight')
+                print("混淆矩阵已保存至 'visualizations/confusion_matrix.png'")
+            
+            plt.show()
     
-    print("\n分类报告:")
-    print(classification_report(true_authors, predicted_authors, labels=unique_labels, digits=4))
+    # 保存结果
+    if save_results:
+        os.makedirs('validation_results', exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        result_path = f'validation_results/validation_{timestamp}.json'
+        
+        with open(result_path, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=4)
+        
+        print(f"验证结果已保存至 '{result_path}'")
     
-    # print("\n混淆矩阵:")
-    # cm = confusion_matrix(true_authors, predicted_authors, labels=unique_labels)
+    return results
+
+def main():
+    """
+    主函数
+    """
+    import argparse
     
-    # # 打印带标签的混淆矩阵
-    # print("    " + " ".join(f"{label[:7]:>7}" for label in unique_labels))
-    # for i, row in enumerate(cm):
-    #     print(f"{unique_labels[i][:7]:>7} " + " ".join(f"{cell:>7}" for cell in row))
+    # 设置随机种子，确保结果可复现
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
     
+    parser = argparse.ArgumentParser(description='验证作者风格识别模型')
+    parser.add_argument('--model_path', type=str, default='../author_style_model', help='模型路径')
+    parser.add_argument('--data_dir', type=str, default='data_val', help='验证数据目录')
+    parser.add_argument('--samples_per_author', type=int, default=70, help='每个作者的样本数量')
+    parser.add_argument('--samples_per_file', type=int, default=70, help='每个文件的样本数量')
+    parser.add_argument('--no_save', action='store_false', dest='save_results', help='不保存结果')
+    parser.add_argument('--no_plot', action='store_false', dest='plot_confusion_matrix', help='不绘制混淆矩阵')
+    
+    args = parser.parse_args()
+    
+    validate_model(
+        model_path=args.model_path,
+        data_dir=args.data_dir,
+        samples_per_author=args.samples_per_author,
+        samples_per_file=args.samples_per_file,
+        save_results=args.save_results,
+        plot_confusion_matrix=args.plot_confusion_matrix
+    )
+
 if __name__ == "__main__":
     main()
