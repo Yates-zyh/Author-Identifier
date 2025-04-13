@@ -6,10 +6,10 @@ WORKDIR /app
 COPY . /app/
 
 # 安装依赖
-RUN pip install --no-cache-dir streamlit
-# 安装项目其他依赖
-# 假设您有一个requirements.txt文件，取消下面这行的注释
-# RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir streamlit torch transformers numpy pandas matplotlib
+
+# 创建模型目录
+RUN mkdir -p /app/author_style_model
 
 # 设置环境变量
 ENV STREAMLIT_SERVER_PORT=8501
@@ -22,4 +22,4 @@ ENV STREAMLIT_SERVER_BASE_URL_PATH="author-identifier"
 EXPOSE 8501
 
 # 启动命令
-CMD ["streamlit", "run", "Identify_streamlit.py"]
+CMD ["streamlit", "run", "GUI_streamlit.py"]

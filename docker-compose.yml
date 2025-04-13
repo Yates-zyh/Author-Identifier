@@ -1,14 +1,23 @@
 version: '3'
+
 services:
-  author-identifier:
+  author-style-app:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: author-style-app
+    restart: always
     ports:
       - "8501:8501"
-    restart: always
-    networks:
-      - web_network
+    volumes:
+      - ./data_train:/app/data_train
+      - ./data_val:/app/data_val
+      - ./author_style_model:/app/author_style_model
+    environment:
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 
 networks:
   web_network:
