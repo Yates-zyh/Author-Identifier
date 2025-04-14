@@ -1,9 +1,17 @@
 from openai import OpenAI
 import time
 import random
+import os
+import dotenv
+
+# 加载环境变量
+dotenv.load_dotenv()
+
+# 从环境变量中获取 API 密钥
+api_key = os.environ.get("OPENAI_API_KEY")
 
 # Initialize OpenAI client with API key and base URL
-client = OpenAI(api_key="sk-5026edabe797479492b0ed7c9d8ad0ca", base_url="https://api.deepseek.com")
+client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 # Function to create a conversation with DeepSeek
 def chat_with_deepseek():
