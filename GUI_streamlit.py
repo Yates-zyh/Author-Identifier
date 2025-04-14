@@ -9,6 +9,10 @@ import os
 import torch
 import time
 from datetime import datetime
+import dotenv
+
+# 加载环境变量
+dotenv.load_dotenv()
 
 # 导入chatbot_with_generator中的类和函数
 from chatbot_with_generator import AuthorStyleAPI, chat_with_deepseek
@@ -203,8 +207,8 @@ def main():
         
         # 在会话状态中初始化Style API（如果不存在）
         if 'style_api' not in st.session_state:
-            # 使用Hugging Face的个人令牌（在生产环境中应保持安全）
-            token = "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"
+            # 从环境变量中获取Hugging Face的令牌
+            token = os.environ.get("HUGGINGFACE_TOKEN")
             st.session_state.style_api = StreamlitAuthorStyleAPI(token)
         
         # 作家选择

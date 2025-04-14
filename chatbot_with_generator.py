@@ -15,9 +15,16 @@ import os
 import json
 from datetime import datetime, timedelta
 from openai import OpenAI
+import dotenv
+
+# 加载环境变量
+dotenv.load_dotenv()
+
+# 从环境变量中获取 API 密钥
+api_key = os.environ.get("OPENAI_API_KEY")
 
 # Initialize DeepSeek client
-client = OpenAI(api_key="sk-5026edabe797479492b0ed7c9d8ad0ca", base_url="https://api.deepseek.com")
+client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
 
 # Author style model API
 class AuthorStyleAPI:
@@ -241,7 +248,8 @@ def chat_with_deepseek(author):
 
 # Main program
 def main():
-    token = "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"
+    # 从环境变量获取 Hugging Face token
+    token = os.environ.get("HUGGINGFACE_TOKEN")
     api = AuthorStyleAPI(token)
 
     print("Available authors:")
