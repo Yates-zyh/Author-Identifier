@@ -28,36 +28,26 @@ class AuthorIdentifier:
     Used to predict the style of text authors
     """
     
-    def __init__(self, model_path: str = None, device: str = None, use_remote: bool = None):
+    def __init__(self, model_path: str = None, device: str = None, token: str = None):
         """
         Initialize the Author Identifier
         
         Parameters:
-        - model_path: Path to the model, default is None, will try to auto-detect the latest model
+        - model_path: Path to the model, default is None, will use "author_style_model"
         - device: Device to use, default is None (auto-detection)
-        - use_remote: Whether to use remote model. If None, will be determined by IDENTIFICATION_TOKEN existence
+        - token: Hugging Face API token, default is None (will use IDENTIFICATION_TOKEN if present)
         """
-        # 默认本地模型路径
+        # 模型路径设置
         self.default_local_path = "author_style_model"
-        
-        # 判断是否使用远程模型
-        self.token = os.environ.get("IDENTIFICATION_TOKEN")
-        if use_remote is None:
-            self.use_remote = self.token is not None
-        else:
-            self.use_remote = use_remote
-            
-        # 如果远程模式指定但没有token，发出警告
-        if self.use_remote and not self.token:
-            logger.warning("Remote mode specified but no IDENTIFICATION_TOKEN found. Will attempt to use local model.")
-            self.use_remote = False
-        
-        # 设置模型路径
         self.model_path = model_path or self.default_local_path
         self.remote_model_path = "Yates-zyh/author_identifier"
         
         # 设备设置
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Using device: {self.device}")
+        
+        # Token设置
+        self.token = token or os.environ.get("IDENTIFICATION_TOKEN")
         
         # 速率限制变量
         self.last_request_time = None
@@ -68,27 +58,40 @@ class AuthorIdentifier:
             logger.info(f"Creating local model directory: {self.model_path}")
             os.makedirs(self.model_path, exist_ok=True)
         
-        # 判断本地模型是否存在
-        local_model_exists = os.path.exists(os.path.join(self.model_path, "config.json"))
+        # 检查本地模型是否存在
+        self.local_model_exists = os.path.exists(os.path.join(self.model_path, "config.json"))
         
-        # 初始模式设置：优先使用本地模型
-        if local_model_exists:
-            logger.info(f"Local model found in {self.model_path}, using local model.")
-            self.use_remote = False
-        elif self.token:
-            logger.info(f"Local model not found, will download from Hugging Face using token")
-            self.use_remote = True
-        else:
-            logger.warning(f"Local model not found and no token available. Will attempt to load from {self.model_path}")
-            self.use_remote = False
-        
-        logger.info(f"Using device: {self.device}")
-        
-        # 加载tokenizer和模型
-        self._load_tokenizer_and_model()
+        # 加载模型
+        self._initialize_model()
         
         # 加载模型元数据
         self.metadata = self._load_metadata()
+    
+    def _initialize_model(self):
+        """初始化模型：如果有token则下载模型到本地并加载，否则直接从远程加载"""
+        if self.token:
+            # 有token，尝试下载模型到本地
+            logger.info("Token available, attempting to download model to local directory")
+            download_success = self._download_model_to_local()
+            
+            if download_success:
+                # 下载成功，从本地加载
+                logger.info("Model downloaded successfully, loading from local path")
+                self._load_local_model()
+            else:
+                # 下载失败，直接从远程加载
+                logger.warning("Failed to download model, loading directly from remote")
+                self._load_remote_model()
+        else:
+            # 没有token
+            if self.local_model_exists:
+                # 本地模型存在，直接从本地加载
+                logger.info("No token provided but local model exists, loading from local path")
+                self._load_local_model()
+            else:
+                # 本地模型不存在，直接从远程加载
+                logger.info("No token provided and no local model, loading directly from remote")
+                self._load_remote_model()
     
     def _wait_for_rate_limit(self):
         """确保请求间隔符合速率限制"""
@@ -142,113 +145,109 @@ class AuthorIdentifier:
                         return False
         return False
     
-    def _load_tokenizer_and_model(self, max_retries=3):
-        """加载tokenizer和模型，支持远程和本地模式"""
-        for attempt in range(max_retries):
+    def _load_local_model(self):
+        """从本地路径加载模型"""
+        try:
+            logger.info(f"Loading model from local path: {self.model_path}")
+            self.tokenizer = BertTokenizer.from_pretrained(self.model_path)
+            self.model = BertForSequenceClassification.from_pretrained(self.model_path)
+            
+            # 加载本地标签
             try:
-                if self.use_remote:
-                    self._wait_for_rate_limit()
-                    # 先尝试下载模型到本地
-                    download_success = self._download_model_to_local()
-                    
-                    if download_success:
-                        # 下载成功后改为使用本地模型
-                        logger.info("Switching to local model after successful download")
-                        self.use_remote = False
-                        return self._load_tokenizer_and_model()  # 递归调用，使用本地模式
-                    
-                    # 如果下载失败，直接从远程加载
-                    logger.info("Loading model directly from Hugging Face")
-                    # 从远程加载tokenizer
-                    self.tokenizer = BertTokenizer.from_pretrained(
-                        self.remote_model_path,
+                with open(os.path.join(self.model_path, "label_names.json"), 'r', encoding='utf-8') as f:
+                    self.label_names = json.load(f)
+            except FileNotFoundError:
+                logger.warning(f"Label file not found: {os.path.join(self.model_path, 'label_names.json')}")
+                self.label_names = [f"Category{i}" for i in range(self.model.config.num_labels)]
+            
+            # 将模型移到指定设备
+            self.model.to(self.device)
+            self.model.eval()
+            
+            logger.info(f"Loaded {len(self.label_names)} labels: {', '.join(self.label_names)}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading local model: {str(e)}")
+            return False
+    
+    def _load_remote_model(self):
+        """直接从远程仓库加载模型"""
+        try:
+            logger.info(f"Loading model directly from remote: {self.remote_model_path}")
+            self.tokenizer = BertTokenizer.from_pretrained(
+                self.remote_model_path,
+                token=self.token
+            )
+            
+            self.model = BertForSequenceClassification.from_pretrained(
+                self.remote_model_path,
+                token=self.token
+            )
+            
+            # 加载远程标签
+            try:
+                if self.token:
+                    label_file = hf_hub_download(
+                        repo_id=self.remote_model_path,
+                        filename="label_names.json",
                         token=self.token
                     )
-                    
-                    # 从远程加载模型
-                    self.model = BertForSequenceClassification.from_pretrained(
-                        self.remote_model_path,
-                        token=self.token
-                    )
-                    
-                    # 加载远程标签
-                    try:
-                        label_file = hf_hub_download(
-                            repo_id=self.remote_model_path,
-                            filename="label_names.json",
-                            token=self.token
-                        )
-                        with open(label_file, 'r', encoding='utf-8') as f:
-                            self.label_names = json.load(f)
-                    except Exception as e:
-                        logger.warning(f"Error loading remote labels: {str(e)}")
-                        self.label_names = [f"Category{i}" for i in range(self.model.config.num_labels)]
                 else:
-                    # 本地模式：从本地路径加载
-                    logger.info(f"Loading model from local path: {self.model_path}")
-                    self.tokenizer = BertTokenizer.from_pretrained(self.model_path)
-                    self.model = BertForSequenceClassification.from_pretrained(self.model_path)
-                    
-                    # 加载本地标签
-                    try:
-                        with open(os.path.join(self.model_path, "label_names.json"), 'r', encoding='utf-8') as f:
-                            self.label_names = json.load(f)
-                    except FileNotFoundError:
-                        logger.warning(f"Label file not found: {os.path.join(self.model_path, 'label_names.json')}")
-                        self.label_names = [f"Category{i}" for i in range(self.model.config.num_labels)]
-                
-                # 将模型移到指定设备
-                self.model.to(self.device)
-                self.model.eval()
-                
-                logger.info(f"Loaded {len(self.label_names)} labels: {', '.join(self.label_names)}")
-                break  # 成功加载，跳出重试循环
+                    # 无token时尝试公开下载
+                    label_file = hf_hub_download(
+                        repo_id=self.remote_model_path,
+                        filename="label_names.json"
+                    )
+                with open(label_file, 'r', encoding='utf-8') as f:
+                    self.label_names = json.load(f)
             except Exception as e:
-                if "429" in str(e) and self.use_remote:  # 速率限制错误
-                    wait_time = (attempt + 1) * 10  # 等待时间指数增长
-                    logger.warning(f"API rate limit reached. Waiting {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"Error loading model (attempt {attempt+1}/{max_retries}): {str(e)}")
-                    if attempt == max_retries - 1:
-                        # 如果是远程模式失败，尝试回退到本地模式
-                        if self.use_remote:
-                            logger.warning("Remote model loading failed. Falling back to local model.")
-                            self.use_remote = False
-                            return self._load_tokenizer_and_model()  # 递归调用，切换到本地模式
-                        else:
-                            raise  # 本地模式仍然失败，抛出异常
+                logger.warning(f"Error loading remote labels: {str(e)}")
+                self.label_names = [f"Category{i}" for i in range(self.model.config.num_labels)]
+            
+            # 将模型移到指定设备
+            self.model.to(self.device)
+            self.model.eval()
+            
+            logger.info(f"Loaded {len(self.label_names)} labels: {', '.join(self.label_names)}")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading remote model: {str(e)}")
+            return False
     
     def _load_metadata(self) -> Dict:
         """加载模型元数据"""
-        if self.use_remote:
-            try:
-                self._wait_for_rate_limit()
-                metadata_path = "model_metadata.json"
-                metadata_file = hf_hub_download(
-                    repo_id=self.remote_model_path,
-                    filename=metadata_path,
-                    token=self.token
-                )
-                with open(metadata_file, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
-                logger.info(f"Remote model metadata loaded")
-                return metadata
-            except Exception as e:
-                logger.warning(f"Failed to load remote model metadata: {str(e)}")
-                return {}
-        else:
-            metadata_path = os.path.join(self.model_path, "model_metadata.json")
-            if os.path.exists(metadata_path):
+        try:
+            # 先尝试从本地加载
+            if os.path.exists(os.path.join(self.model_path, "model_metadata.json")):
                 try:
-                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                    with open(os.path.join(self.model_path, "model_metadata.json"), 'r', encoding='utf-8') as f:
                         metadata = json.load(f)
                     logger.info(f"Local model metadata loaded")
                     return metadata
                 except Exception as e:
                     logger.warning(f"Failed to load local model metadata: {str(e)}")
             
-            logger.warning(f"Metadata file not found: {metadata_path}")
+            # 如果本地没有，且有token，尝试从远程加载
+            if self.token:
+                try:
+                    self._wait_for_rate_limit()
+                    metadata_file = hf_hub_download(
+                        repo_id=self.remote_model_path,
+                        filename="model_metadata.json",
+                        token=self.token
+                    )
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    logger.info(f"Remote model metadata loaded")
+                    return metadata
+                except Exception as e:
+                    logger.warning(f"Failed to load remote model metadata: {str(e)}")
+            
+            # 无法加载任何元数据，返回空字典
+            logger.warning(f"No metadata could be loaded")
+            return {}
+        except Exception as e:
+            logger.error(f"Error in _load_metadata: {str(e)}")
             return {}
     
     def _batch_texts(self, text: str, max_length: int = 512, overlap: int = 128, 
@@ -383,9 +382,6 @@ class AuthorIdentifier:
         Returns:
         - result: Dictionary containing prediction results
         """
-        if self.use_remote:
-            self._wait_for_rate_limit()
-            
         inputs = self.tokenizer(
             text,
             return_tensors="pt",
@@ -458,39 +454,31 @@ class AuthorIdentifier:
         Returns:
         - info: Dictionary containing model information
         """
-        if self.use_remote:
-            info = {
-                "model_path": self.remote_model_path,
-                "mode": "remote",
-                "device": str(self.device),
-                "labels": self.label_names,
-                "num_labels": len(self.label_names),
-            }
-        else:
-            info = {
-                "model_path": self.model_path,
-                "mode": "local",
-                "device": str(self.device),
-                "labels": self.label_names,
-                "num_labels": len(self.label_names),
-            }
+        info = {
+            "model_path": self.model_path if self.local_model_exists else self.remote_model_path,
+            "mode": "local" if self.local_model_exists else "remote",
+            "device": str(self.device),
+            "labels": self.label_names,
+            "num_labels": len(self.label_names),
+        }
         
         # Add metadata information
         info.update(self.metadata)
         
         return info
 
-# Simplified API function
-def analyze_text(text: str, confidence_threshold: float = 0.7) -> Dict:
+# 简化的API函数
+def analyze_text(text: str, confidence_threshold: float = 0.7, token: str = None) -> Dict:
     """
     Simplified API function for analyzing text author style
     
     Parameters:
     - text: Input text
     - confidence_threshold: Confidence threshold
+    - token: Hugging Face API token (optional)
     
     Returns:
     - result: Dictionary containing prediction results
     """
-    identifier = AuthorIdentifier()
+    identifier = AuthorIdentifier(token=token)
     return identifier.analyze_text(text, confidence_threshold)
