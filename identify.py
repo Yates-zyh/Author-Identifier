@@ -28,7 +28,7 @@ class AuthorIdentifier:
         - model_path: Path to the model, default is None, will try to auto-detect the latest model
         - device: Device to use, default is None (auto-detection)
         """
-        self.model_path = "../author_style_model"
+        self.model_path = "author_style_model"
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         logger.info(f"Loading model: {self.model_path}")

@@ -518,7 +518,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Train author style identification model')
     parser.add_argument('--train_dir', type=str, default='data_train', help='Training data directory')
     parser.add_argument('--val_dir', type=str, default='data_val', help='Validation data directory')
-    parser.add_argument('--model_dir', type=str, default='../author_style_model', help='Model save directory')
+    parser.add_argument('--model_dir', type=str, default='author_style_model', help='Model save directory')
     parser.add_argument('--model_name', type=str, default='bert-base-uncased', help='Pre-trained model name')
     parser.add_argument('--epochs', type=int, default=20, help='Training epochs')
     parser.add_argument('--no_balance', action='store_false', dest='balance_samples', help='Do not balance samples across classes')

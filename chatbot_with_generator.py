@@ -249,7 +249,7 @@ def chat_with_deepseek(author):
 # Main program
 def main():
     # 从环境变量获取 Hugging Face token
-    token = os.environ.get("HUGGINGFACE_TOKEN")
+    token = os.environ.get("GENERATION_TOKEN")
     api = AuthorStyleAPI(token)
 
     print("Available authors:")

@@ -206,10 +206,10 @@ class AuthorStyleAPI:
 def main():
 
     # 从环境变量获取 Hugging Face token
-    token = os.environ.get("HUGGINGFACE_TOKEN")
+    token = os.environ.get("GENERATION_TOKEN")
     # 确保 token 已设置
     if not token:
-        raise ValueError("请确保在 .env 文件中设置了 HUGGINGFACE_TOKEN 环境变量")
+        raise ValueError("请确保在 .env 文件中设置了 GENERATION_TOKEN 环境变量")
         
     api = AuthorStyleAPI(token)
     
