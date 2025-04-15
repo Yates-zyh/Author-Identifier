@@ -5,7 +5,7 @@ streamlit run GUI_streamlit.py
 """
 import streamlit as st
 from identify import AuthorIdentifier
-from generate_with_chatbot import AuthorStyleAPI, chat_with_deepseek
+from generate_with_chatbot import AuthorStyleAPI, chat_with_deepseek, compare_style
 import os
 import dotenv
 import logging
@@ -181,7 +181,7 @@ def text_generation(tab):
 def local_model_generation(tab):
     """使用本地模型生成文本功能"""
     tab.subheader("Generate Text with Local Model")
-    tab.markdown("Generate text in the style of different authors using fine-tuned language models hosted on Hugging Face.")
+    tab.markdown("Generate text in the style of different authors using our own fine-tuned language models.")
     
     # 检查环境变量中是否存在 GENERATION_TOKEN
     token_from_env = os.environ.get("GENERATION_TOKEN")
@@ -479,89 +479,18 @@ def style_comparison(tab):
                 with evaluation_container:
                     with st.spinner("Evaluating text style matching..."):
                         try:
-                            # 初始化 AuthorStyleAPI 和一些基本变量
                             token = os.environ.get("GENERATION_TOKEN")
+                            
+                            # 获取要比较的文本
                             local_text = st.session_state.local_generated_text['samples'][0]
                             deepseek_text = st.session_state.deepseek_generated_text['text']
                             author = local_author
-                            
-                            # 加载并使用辨别器模型评估文本风格匹配度
-                            from transformers import BertForSequenceClassification, BertTokenizer
-                            import torch.nn.functional as F
-                            import torch
                             
                             # 显示加载状态
                             status_message = st.info("Loading discriminator model...")
                             
                             try:
-                                # 创建鉴别器模型路径
-                                model_name = "fjxddy/author-stylegan"
-                                discriminator_path = f"discriminators/{author}/best_model"
-                                
-                                # 使用 token 加载鉴别器
-                                tokenizer = BertTokenizer.from_pretrained(
-                                    model_name,
-                                    subfolder=discriminator_path,
-                                    token=token
-                                )
-                                
-                                model = BertForSequenceClassification.from_pretrained(
-                                    model_name,
-                                    subfolder=discriminator_path,
-                                    token=token
-                                )
-                                
-                                # 更新状态消息
-                                status_message.info("Discriminator model loaded. Evaluating texts...")
-                                
-                                # 加载标签名称
-                                try:
-                                    from huggingface_hub import hf_hub_download
-                                    label_path = f"{discriminator_path}/label_names.json"
-                                    label_file = hf_hub_download(
-                                        repo_id=model_name,
-                                        filename=label_path,
-                                        token=token
-                                    )
-                                    with open(label_file, "r") as f:
-                                        author_labels = json.load(f)
-                                except Exception as e:
-                                    tab.warning(f"Could not load label names: {str(e)}")
-                                    author_labels = [None, author]  # 默认标签
-                                
-                                # 创建作者索引映射
-                                author_indices = {author_name: idx for idx, author_name in enumerate(author_labels) if author_name is not None}
-                                author_idx = author_indices.get(author, 1)  # 默认使用索引1
-                                
-                                # 评估本地模型生成的文本
-                                local_inputs = tokenizer(
-                                    local_text,
-                                    return_tensors="pt",
-                                    padding='max_length',
-                                    truncation=True,
-                                    max_length=512
-                                )
-                                
-                                with torch.no_grad():
-                                    local_outputs = model(**local_inputs)
-                                    local_logits = local_outputs.logits
-                                    local_probs = F.softmax(local_logits, dim=1)
-                                    local_score = local_probs[0][author_idx].item()
-                                
-                                # 评估DeepSeek生成的文本
-                                deepseek_inputs = tokenizer(
-                                    deepseek_text,
-                                    return_tensors="pt",
-                                    padding='max_length',
-                                    truncation=True,
-                                    max_length=512
-                                )
-                                
-                                with torch.no_grad():
-                                    deepseek_outputs = model(**deepseek_inputs)
-                                    deepseek_logits = deepseek_outputs.logits
-                                    deepseek_probs = F.softmax(deepseek_logits, dim=1)
-                                    deepseek_score = deepseek_probs[0][author_idx].item()
+                                result = compare_style(author, local_text, deepseek_text, token)
                                 
                                 # 清除状态消息
                                 status_message.empty()
@@ -571,17 +500,17 @@ def style_comparison(tab):
                                 
                                 score_col1, score_col2 = tab.columns(2)
                                 with score_col1:
-                                    tab.info(f"Local Model Style Match Score: {local_score:.4f}")
+                                    tab.info(f"Local Model Style Match Score: {result['local_score']:.4f}")
                                 
                                 with score_col2:
-                                    tab.info(f"DeepSeek Style Match Score: {deepseek_score:.4f}")
+                                    tab.info(f"DeepSeek Style Match Score: {result['deepseek_score']:.4f}")
                                 
                                 # 比较结果
                                 tab.subheader("Comparison Result")
-                                if local_score > deepseek_score:
-                                    tab.success(f"📊 Local Model generated text better matches {author}'s style (score: {local_score:.4f} vs {deepseek_score:.4f}).")
-                                elif deepseek_score > local_score:
-                                    tab.success(f"🌟 DeepSeek generated text better matches {author}'s style (score: {deepseek_score:.4f} vs {local_score:.4f}).")
+                                if result['better_match'] == 'local':
+                                    tab.success(f"📊 Local Model generated text better matches {author}'s style (score: {result['local_score']:.4f} vs {result['deepseek_score']:.4f}).")
+                                elif result['better_match'] == 'deepseek':
+                                    tab.success(f"🌟 DeepSeek generated text better matches {author}'s style (score: {result['deepseek_score']:.4f} vs {result['local_score']:.4f}).")
                                 else:
                                     tab.info("⚖️ Both models generated text with identical style matching scores.")
                                 
@@ -598,18 +527,6 @@ def style_comparison(tab):
                                 status_message.empty()
                                 tab.error(f"Error loading discriminator model: {str(e)}")
                                 tab.warning("Unable to use discriminator model. Please try again or check your Hugging Face token.")
-                                
-                                # 提供手动比较指导
-                                tab.subheader("Manual Style Comparison Guide")
-                                tab.markdown("""
-                                Since automatic evaluation is unavailable, consider these aspects when comparing texts:
-                                
-                                1. **Vocabulary**: Does the text use words typical of the author?
-                                2. **Sentence Structure**: Are sentence lengths and patterns similar to the author's style?
-                                3. **Literary Devices**: Does the text employ metaphors, similes, or other devices like the author?
-                                4. **Character Dialogue**: If present, does dialogue match the author's character voice?
-                                5. **Narrative Perspective**: Does the text use the same narrative perspective as the author?
-                                """)
                         except Exception as e:
                             tab.error(f"Error comparing text styles: {str(e)}")
         else:
