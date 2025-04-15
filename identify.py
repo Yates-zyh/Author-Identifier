@@ -6,10 +6,10 @@ import numpy as np
 from typing import Dict, List
 import logging
 import dotenv
-from huggingface_hub import hf_hub_download, snapshot_download
 import time
 from datetime import datetime
 import shutil
+import subprocess
 
 # 加载环境变量
 dotenv.load_dotenv()
@@ -105,22 +105,40 @@ class AuthorIdentifier:
         """下载模型到本地目录"""
         if not self.token:
             logger.error("No Hugging Face token available for model download")
-            return False
+            # 提示用户输入token
+            print("需要Hugging Face令牌(token)才能下载模型")
+            user_token = input("请输入您的Hugging Face令牌(token)，或直接按Enter跳过: ")
+            if user_token:
+                self.token = user_token
+                logger.info("User provided token will be used for download")
+            else:
+                logger.warning("No token provided, will try to use from-pretrained")
+                return False
             
         for attempt in range(max_retries):
             try:
                 logger.info(f"Downloading model from {self.remote_model_path} to {self.model_path} (attempt {attempt+1}/{max_retries})...")
                 self._wait_for_rate_limit()
                 
-                # 使用snapshot_download下载整个模型仓库
+                # 创建临时目录
                 temp_dir = f"{self.model_path}_temp"
                 os.makedirs(temp_dir, exist_ok=True)
                 
-                snapshot_download(
-                    repo_id=self.remote_model_path,
-                    local_dir=temp_dir,
-                    token=self.token
-                )
+                # 使用huggingface-cli下载整个模型仓库
+                cmd = [
+                    "huggingface-cli", "download",
+                    "--token", self.token,
+                    "--local-dir", temp_dir,
+                    self.remote_model_path
+                ]
+                
+                # 执行命令
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                # 检查命令是否成功
+                if result.returncode != 0:
+                    logger.warning(f"huggingface-cli download failed: {result.stderr}")
+                    raise Exception(f"huggingface-cli download failed: {result.stderr}")
                 
                 # 成功下载后，移动文件到最终目录
                 if os.path.exists(self.model_path):
@@ -174,35 +192,59 @@ class AuthorIdentifier:
         """直接从远程仓库加载模型"""
         try:
             logger.info(f"Loading model directly from remote: {self.remote_model_path}")
+            # 直接从远程加载模型，无论是否有token
+            kwargs = {"token": self.token} if self.token else {}
+            
+            # 加载tokenizer和模型
             self.tokenizer = BertTokenizer.from_pretrained(
                 self.remote_model_path,
-                token=self.token
+                **kwargs
             )
             
             self.model = BertForSequenceClassification.from_pretrained(
                 self.remote_model_path,
-                token=self.token
+                **kwargs
             )
             
-            # 加载远程标签
+            # 尝试加载标签信息
             try:
+                # 创建临时目录下载标签文件
+                temp_dir = f"{self.model_path}_temp"
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                # 准备下载命令
+                cmd = ["huggingface-cli", "download"]
                 if self.token:
-                    label_file = hf_hub_download(
-                        repo_id=self.remote_model_path,
-                        filename="label_names.json",
-                        token=self.token
-                    )
+                    cmd.extend(["--token", self.token])
+                cmd.extend([
+                    "--include", "label_names.json",
+                    "--local-dir", temp_dir,
+                    self.remote_model_path
+                ])
+                
+                # 执行命令
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                # 检查命令是否成功
+                if result.returncode != 0:
+                    raise Exception(f"Failed to download label file: {result.stderr}")
+                
+                # 读取下载的标签文件
+                label_file = os.path.join(temp_dir, "label_names.json")
+                if os.path.exists(label_file):
+                    with open(label_file, 'r', encoding='utf-8') as f:
+                        self.label_names = json.load(f)
                 else:
-                    # 无token时尝试公开下载
-                    label_file = hf_hub_download(
-                        repo_id=self.remote_model_path,
-                        filename="label_names.json"
-                    )
-                with open(label_file, 'r', encoding='utf-8') as f:
-                    self.label_names = json.load(f)
+                    raise FileNotFoundError("Label file not found after download")
+                
             except Exception as e:
                 logger.warning(f"Error loading remote labels: {str(e)}")
+                # 使用模型的默认标签
                 self.label_names = [f"Category{i}" for i in range(self.model.config.num_labels)]
+            finally:
+                # 清理临时目录
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
             
             # 将模型移到指定设备
             self.model.to(self.device)
@@ -231,17 +273,44 @@ class AuthorIdentifier:
             if self.token:
                 try:
                     self._wait_for_rate_limit()
-                    metadata_file = hf_hub_download(
-                        repo_id=self.remote_model_path,
-                        filename="model_metadata.json",
-                        token=self.token
-                    )
-                    with open(metadata_file, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                    logger.info(f"Remote model metadata loaded")
-                    return metadata
+                    
+                    # 创建临时目录下载元数据文件
+                    temp_dir = f"{self.model_path}_temp_metadata"
+                    os.makedirs(temp_dir, exist_ok=True)
+                    
+                    # 使用huggingface-cli下载元数据文件
+                    cmd = [
+                        "huggingface-cli", "download",
+                        "--token", self.token,
+                        "--include", "model_metadata.json",
+                        "--local-dir", temp_dir,
+                        self.remote_model_path
+                    ]
+                    
+                    # 执行命令
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    
+                    # 检查命令是否成功
+                    if result.returncode != 0:
+                        raise Exception(f"Failed to download metadata file: {result.stderr}")
+                    
+                    # 读取下载的元数据文件
+                    metadata_file = os.path.join(temp_dir, "model_metadata.json")
+                    if os.path.exists(metadata_file):
+                        with open(metadata_file, 'r', encoding='utf-8') as f:
+                            metadata = json.load(f)
+                        # 清理临时目录
+                        shutil.rmtree(temp_dir)
+                        logger.info(f"Remote model metadata loaded")
+                        return metadata
+                    else:
+                        raise FileNotFoundError("Metadata file not found after download")
+                    
                 except Exception as e:
                     logger.warning(f"Failed to load remote model metadata: {str(e)}")
+                    # 清理临时目录
+                    if os.path.exists(temp_dir):
+                        shutil.rmtree(temp_dir)
             
             # 无法加载任何元数据，返回空字典
             logger.warning(f"No metadata could be loaded")
@@ -251,7 +320,7 @@ class AuthorIdentifier:
             return {}
     
     def _batch_texts(self, text: str, max_length: int = 512, overlap: int = 128, 
-                     min_chunk_length: int = 100) -> List[str]:
+                    min_chunk_length: int = 100) -> List[str]:
         """
         Split long text into multiple overlapping batches for processing
         
@@ -295,7 +364,7 @@ class AuthorIdentifier:
         return chunks
     
     def analyze_text(self, text: str, confidence_threshold: float = 0.7, 
-                     return_all_chunks: bool = False) -> Dict:
+                    return_all_chunks: bool = False) -> Dict:
         """
         Analyze the style of text authors
         
@@ -374,11 +443,9 @@ class AuthorIdentifier:
     def _analyze_single_chunk(self, text: str, confidence_threshold: float = 0.7) -> Dict:
         """
         Analyze the style of a single text chunk
-        
         Parameters:
         - text: Input text
         - confidence_threshold: Confidence threshold
-        
         Returns:
         - result: Dictionary containing prediction results
         """
@@ -425,11 +492,9 @@ class AuthorIdentifier:
     def analyze_file(self, file_path: str, confidence_threshold: float = 0.7) -> Dict:
         """
         Analyze the style of text authors in a file
-        
         Parameters:
         - file_path: Path to the file
         - confidence_threshold: Confidence threshold
-        
         Returns:
         - result: Dictionary containing prediction results
         """
@@ -448,12 +513,6 @@ class AuthorIdentifier:
             }
     
     def get_model_info(self) -> Dict:
-        """
-        Get model information
-        
-        Returns:
-        - info: Dictionary containing model information
-        """
         info = {
             "model_path": self.model_path if self.local_model_exists else self.remote_model_path,
             "mode": "local" if self.local_model_exists else "remote",
@@ -469,16 +528,5 @@ class AuthorIdentifier:
 
 # 简化的API函数
 def analyze_text(text: str, confidence_threshold: float = 0.7, token: str = None) -> Dict:
-    """
-    Simplified API function for analyzing text author style
-    
-    Parameters:
-    - text: Input text
-    - confidence_threshold: Confidence threshold
-    - token: Hugging Face API token (optional)
-    
-    Returns:
-    - result: Dictionary containing prediction results
-    """
     identifier = AuthorIdentifier(token=token)
     return identifier.analyze_text(text, confidence_threshold)

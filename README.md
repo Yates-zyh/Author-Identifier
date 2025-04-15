@@ -2,9 +2,12 @@
 
 A comprehensive system for author style analysis, identification, and text generation based on specific author styles.
 
+
 ## Overview
 
 This project provides tools to analyze writing styles, identify authors of given texts, and generate new text in the style of specific authors. It uses state-of-the-art natural language processing techniques, including BERT for author classification and specialized models for style-based text generation with DeepSeek API integration for comparison.
+
+For more details, visit the [project introduction homepage](https://yates-z.top/author_analyzer.html).
 
 ## Features
 
@@ -40,16 +43,14 @@ The GUI provides five main tabs:
 
 ## Project Structure
 
-- `GUI_streamlit.py`: **Main entry point** - Streamlit web interface for all functionality
-- `identify.py`: Core module for identifying authors from text samples
-- `generate_with_chatbot.py`: Text generation functionality with chatbot integration
+- `GUI_streamlit.py`: **Main entry point** - Streamlit web interface for all functionality, including author style analysis, text generation, and model comparison.
+- `identify.py`: Core module for identifying authors from text samples. It uses a fine-tuned BERT model to predict the author of a given text.
+- `generate_with_chatbot.py`: Provides APIs for generating text in the style of specific authors and comparing styles using local models and the DeepSeek API.
 - `train.py`: Script for training the author style classification model
 - `trainseq.py`: Sequential training pipeline for author style models
-- `validate.py`: Module for validating model performance
 - `tools/`: Utility scripts for data preparation and model management
 - `data_train/`: Directory containing training text samples from various authors
 - `data_val/`: Directory containing validation text samples from the same authors
-- `visualizations/`: Output directory for training history visualizations
 - `docker-compose.yml` & `Dockerfile`: Container configuration (in progress)
 
 ## Data Structure
@@ -125,7 +126,7 @@ print(f"Confidence: {result['confidence']:.2f}")
 Generate text in the style of a specific author:
 
 ```python
-from chatbot_with_generator import AuthorStyleAPI
+from generate_with_chatbot import AuthorStyleAPI
 
 api = AuthorStyleAPI(token="your_huggingface_token")
 samples = api.generate_text(author="Mark_Twain", num_samples=1, max_length=200)
@@ -198,3 +199,4 @@ The current version supports the following authors:
 - This project was developed as part of the EBA5004 Practical Language Processing course.
 - Thanks to the Hugging Face team for their Transformers library.
 - Thanks to DeepSeek for providing API access for comparison models.
+
