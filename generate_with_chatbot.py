@@ -70,29 +70,14 @@ class AuthorStyleAPI:
                 time.sleep(self.min_request_interval - elapsed)
         self.last_request_time = datetime.now()
 
-    def _get_token(self, purpose="下载模型"):
-        """获取token，如果没有则提示用户输入"""
-        if self.token:
-            return self.token
-            
-        print(f"需要Hugging Face令牌(token)才能{purpose}")
-        user_token = input("请输入您的Hugging Face令牌(token)，或直接按Enter跳过: ")
-        if user_token:
-            self.token = user_token
-            logger.info(f"User provided token will be used for {purpose}")
-            return user_token
-        
-        logger.warning(f"No token provided for {purpose}")
-        return None
-
-    def _download_model_with_cli(self, remote_path, local_path, token, recursive=True):
+    def _download_model_with_cli(self, remote_path, local_path, token=None, recursive=True):
         """
         使用huggingface-cli命令下载模型
         
         参数:
         - remote_path: 远程模型路径
         - local_path: 本地存储路径
-        - token: Hugging Face API token
+        - token: Hugging Face API token，可选参数
         - recursive: 是否递归下载整个目录
         
         返回:
@@ -105,13 +90,23 @@ class AuthorStyleAPI:
             
             # 构建下载命令
             pattern = f"{remote_path}/**" if recursive else remote_path
-            cmd = [
-                "huggingface-cli", "download",
-                "--token", token,
-                "--include", pattern,
-                "--local-dir", temp_dir,
-                self.model_name
-            ]
+            
+            # 如果有token才添加token参数
+            if token:
+                cmd = [
+                    "huggingface-cli", "download",
+                    "--token", token,
+                    "--include", pattern,
+                    "--local-dir", temp_dir,
+                    self.model_name
+                ]
+            else:
+                cmd = [
+                    "huggingface-cli", "download",
+                    "--include", pattern,
+                    "--local-dir", temp_dir,
+                    self.model_name
+                ]
             
             logger.info(f"Downloading from {remote_path} using huggingface-cli...")
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -183,11 +178,6 @@ class AuthorStyleAPI:
             logger.info(f"Local {model_type} model already exists at {local_path}")
             return True
             
-        # 获取token
-        token = self._get_token(f"下载{author}的{model_type}模型")
-        if not token:
-            return False
-            
         # 尝试下载模型
         for attempt in range(max_retries):
             try:
@@ -195,7 +185,7 @@ class AuthorStyleAPI:
                 self._wait_for_rate_limit()
                 
                 # 使用huggingface-cli下载
-                success = self._download_model_with_cli(remote_path, local_path, token)
+                success = self._download_model_with_cli(remote_path, local_path, self.token)
                 
                 if success:
                     logger.info(f"Successfully downloaded {model_type} model to {local_path}")
@@ -379,11 +369,6 @@ class AuthorStyleAPI:
                 logger.info(f"Loading remote discriminator model for {author}... (attempt {attempt + 1}/{max_retries})")
                 self._wait_for_rate_limit()
                 
-                # 确保有token
-                token = self._get_token(f"加载{author}的鉴别器模型")
-                if not token:
-                    raise ValueError(f"无法加载{author}的鉴别器模型：没有提供token")
-                
                 try:
                     # 使用明确的远程路径，尝试两种可能的路径结构
                     remote_paths = [
@@ -403,13 +388,13 @@ class AuthorStyleAPI:
                             tokenizer = BertTokenizer.from_pretrained(
                                 self.model_name,
                                 subfolder=remote_path,
-                                token=token
+                                token=self.token
                             )
                             
                             model = BertForSequenceClassification.from_pretrained(
                                 self.model_name,
                                 subfolder=remote_path,
-                                token=token
+                                token=self.token
                             )
                             
                             # 尝试加载label_names.json
@@ -418,7 +403,7 @@ class AuthorStyleAPI:
                                 label_file = hf_hub_download(
                                     repo_id=self.model_name,
                                     filename=f"{remote_path}/label_names.json",
-                                    token=token
+                                    token=self.token
                                 )
                                 
                                 with open(label_file, "r", encoding='utf-8') as f:
@@ -617,6 +602,15 @@ class AuthorStyleAPI:
         except Exception as e:
             logger.error(f"Error comparing text styles: {str(e)}")
             raise
+    
+    def get_available_authors(self):
+        """
+        获取所有可用的作者列表
+        
+        返回:
+        - authors: 可用作者的列表
+        """
+        return self.available_authors
 
 # DeepSeek API客户端创建函数
 def create_deepseek_client(api_key=None):
@@ -720,77 +714,3 @@ def compare_style(author, local_text, deepseek_text, token=None):
         deepseek_text, 
         model_names=["local", "deepseek"]
     )
-
-# Main program
-def main():
-    # 从环境变量获取 Hugging Face token
-    token = os.environ.get("GENERATION_TOKEN")
-    api = AuthorStyleAPI(token)
-
-    print("Available authors:")
-    for author in api.available_authors:
-        print(f"- {author}")
-
-    while True:
-        author = input("\nEnter author name (or 'quit' to exit): ")
-        if author.lower() == 'quit':
-            break
-
-        if author not in api.available_authors:
-            print(f"Author {author} not available. Please choose from the list above.")
-            continue
-
-        try:
-            # 获取可选的提示文本
-            prompt = input("\nEnter a prompt (optional, press Enter to skip): ")
-            
-            # Generate text using own model
-            print(f"\nGenerating text in the style of {author}...")
-            samples = api.generate_text(author, prompt)
-            print("\nGenerated text:")
-            for i, sample in enumerate(samples):
-                print(f"\nSample {i+1}:")
-                print(sample)
-
-            # Generate text using DeepSeek API
-            print("\nDo you want to generate text using DeepSeek API? (y/n)")
-            deepseek_choice = input("> ")
-            
-            if deepseek_choice.lower() == 'y':
-                # 检查环境变量中是否有API密钥
-                api_key = os.environ.get("OPENAI_API_KEY")
-                
-                if not api_key:
-                    print("\nNo DeepSeek API key found in environment variables.")
-                    print("Do you want to enter an API key? (y/n)")
-                    key_choice = input("> ")
-                    
-                    if key_choice.lower() == 'y':
-                        api_key = input("Enter your DeepSeek API key: ")
-                    else:
-                        print("Skipping DeepSeek text generation.")
-                        continue
-                
-                print(f"\nGenerating text in the style of {author} using DeepSeek...")
-                deepseek_text = chat_with_deepseek(author, prompt, api_key)
-                print("\nDeepSeek generated text:")
-                print(deepseek_text)
-                
-                # 比较生成的文本
-                print("\nDo you want to compare the style match of both texts? (y/n)")
-                compare_choice = input("> ")
-                
-                if compare_choice.lower() == 'y':
-                    print("\nComparing style match...")
-                    result = compare_style(author, samples[0], deepseek_text, token)
-                    
-                    print(f"\nStyle match scores (higher is better):")
-                    print(f"- Local model: {result['local_score']:.4f}")
-                    print(f"- DeepSeek: {result['deepseek_score']:.4f}")
-                    print(f"Better match: {result['better_match']}")
-
-        except Exception as e:
-            print(f"Error: {str(e)}")
-
-if __name__ == "__main__":
-    main()

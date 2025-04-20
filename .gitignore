@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+*.lock
 
 # 环境变量文件（包含敏感信息）
 .env
@@ -15,3 +16,6 @@ wheels/
 
 # model
 author_style_model/
+
+# html
+*.html

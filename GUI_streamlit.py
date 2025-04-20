@@ -304,7 +304,13 @@ def local_model_generation(tab):
                     
                     for i, sample in enumerate(samples):
                         tab.markdown(f"**Sample {i+1}:**")
-                        tab.markdown(f"```\n{sample}\n```")
+                        # 使用文本区域而不是代码块显示文本，以便自动换行
+                        tab.text_area(
+                            label=f"Sample {i+1} content",
+                            value=sample,
+                            height=200,
+                            label_visibility="collapsed"
+                        )
                         tab.markdown("---")
                 except Exception as e:
                     tab.error(f"Error generating text: {str(e)}")
@@ -513,14 +519,6 @@ def style_comparison(tab):
                                     tab.success(f"🌟 DeepSeek generated text better matches {author}'s style (score: {result['deepseek_score']:.4f} vs {result['local_score']:.4f}).")
                                 else:
                                     tab.info("⚖️ Both models generated text with identical style matching scores.")
-                                
-                                # 添加评分解释
-                                tab.markdown("""
-                                **Score interpretation**:
-                                - Higher scores indicate better style matching with the selected author
-                                - Scores range from 0 (not matching) to 1 (perfect match)
-                                - Scores above 0.7 typically indicate strong style resemblance
-                                """)
                                 
                             except Exception as e:
                                 # 清除状态消息并显示错误
