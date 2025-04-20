@@ -15,3 +15,6 @@ wheels/
 
 # model
 author_style_model/
+
+# html
+*.html
