@@ -1,12 +1,13 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# 复制应用代码
+# 复制项目文件
 COPY . /app/
 
-# 安装依赖
-RUN pip install --no-cache-dir streamlit torch transformers numpy pandas matplotlib
+# 安装uv并使用它来安装项目依赖
+RUN pip install --no-cache-dir uv
+RUN uv sync
 
 # 创建模型目录
 RUN mkdir -p /app/author_style_model
