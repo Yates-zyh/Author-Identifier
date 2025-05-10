@@ -1,0 +1,38 @@
+[project]
+name = "author_identifier"
+dynamic = ["version"]
+description = "A project for author identification and generation using machine learning."
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["machine-learning", "deep-learning", "generation", "author-identification"]
+authors = [
+    { name = "Zhu Yihang", email = "E1351358@u.nus.edu" },
+    { name = "Huang Tianle", email = "3192593037@qq.com" },
+    { name = "Huang Chenyu", email = "2498946664@qq.com" }
+]
+maintainers = [
+    { name = "Zhu Yihang", email = "E1351358@u.nus.edu" },
+    { name = "Huang Tianle", email = "3192593037@qq.com" },
+    { name = "Huang Chenyu", email = "2498946664@qq.com" }
+]
+dependencies = [
+    "crawl4ai>=0.6.2",
+    "dotenv>=0.9.9",
+    "huggingface-hub>=0.30.2",
+    "markupsafe==2.1.5",
+    "matplotlib>=3.10.1",
+    "nltk>=3.9.1",
+    "openai>=1.76.0",
+    "pdfminer>=20191125",
+    "scikit-learn>=1.6.1",
+    "seaborn>=0.13.2",
+    "streamlit>=1.44.1",
+    "torch==2.6.0",
+    "torchaudio==2.6.0",
+    "torchvision==0.21.0",
+    "transformers>=4.51.3",
+]
+
+
+[tool.setuptools]
+packages = { find = { where = ["."] } }
